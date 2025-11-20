@@ -1,0 +1,10 @@
+crime_clusters_with_labels.csv
+cluster_summary.csv
+crime_filtered.csv
+*.parquet
+*.db
+__pycache__/
+.env
+env/
+venv/
+

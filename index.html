@@ -1,0 +1,140 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Crime Risk Quick Check</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; padding: 12px; }
+    .card { max-width: 920px; margin:auto; padding:12px; border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,0.08); }
+    label { display:block; margin-top:8px; font-weight:600; }
+    input { width:100%; padding:8px; margin-top:6px; box-sizing:border-box; }
+    button { margin-top:10px; padding:10px 14px; background:#0077cc; color:white; border:none; border-radius:6px; cursor:pointer; }
+    #map { height: 420px; margin-top:12px; display:none; }
+    pre { background:#f6f8fa; padding:8px; border-radius:6px; white-space:pre-wrap; word-break:break-word; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Crime Risk Quick Check (Chicago)</h2>
+    <p>Search a Chicago place or let the browser get your location. Then press <strong>Check Risk</strong>.</p>
+
+    <label>Place name (Chicago)</label>
+    <div style="display:flex; gap:8px;">
+      <input id="placeInput" placeholder="e.g. Wrigley Field, Lincoln Park, Millennium Park" style="flex:1" />
+      <button id="btnPlaceSearch">Search place</button>
+    </div>
+
+    <div style="margin-top:8px;">
+      <button id="btnAuto">Auto-detect my location</button>
+    </div>
+
+    <label>Latitude</label>
+    <input id="latInput" placeholder="e.g. 41.7500" />
+    <label>Longitude</label>
+    <input id="lonInput" placeholder="e.g. -87.6000" />
+    <button id="btnCheck">Check Risk</button>
+
+    <div id="status" style="margin-top:8px;color:#333;"></div>
+    <pre id="result"></pre>
+
+    <div id="map"></div>
+  </div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const apiBase = "http://127.0.0.1:8000"; // backend must run at this address
+const statusEl = document.getElementById('status');
+const resultEl = document.getElementById('result');
+const mapDiv = document.getElementById('map');
+let map, userMarker, lowMarker;
+
+document.getElementById('btnPlaceSearch').onclick = async () => {
+  const place = document.getElementById('placeInput').value.trim();
+  if (!place) { statusEl.textContent = "Enter a place name."; return; }
+  statusEl.textContent = "Geocoding place name...";
+  try {
+    const res = await fetch(`${apiBase}/geocode?place=${encodeURIComponent(place)}`);
+    if (!res.ok) { statusEl.textContent = "Geocode error"; return; }
+    const data = await res.json();
+    document.getElementById('latInput').value = data.lat.toFixed(6);
+    document.getElementById('lonInput').value = data.lon.toFixed(6);
+    statusEl.textContent = `Found: ${data.display_name}`;
+  } catch (e) { statusEl.textContent = "Geocoding failed: " + e.message; }
+};
+
+document.getElementById('btnAuto').onclick = () => {
+  if (!navigator.geolocation) { statusEl.textContent = "Geolocation not supported."; return; }
+  statusEl.textContent = "Requesting location...";
+  navigator.geolocation.getCurrentPosition(pos => {
+    const lat = pos.coords.latitude, lon = pos.coords.longitude;
+    document.getElementById('latInput').value = lat.toFixed(6);
+    document.getElementById('lonInput').value = lon.toFixed(6);
+    statusEl.textContent = "Location acquired.";
+  }, err => {
+    statusEl.textContent = "Location access denied or unavailable.";
+  }, { enableHighAccuracy: true });
+};
+
+document.getElementById('btnCheck').onclick = async () => {
+  const lat = parseFloat(document.getElementById('latInput').value);
+  const lon = parseFloat(document.getElementById('lonInput').value);
+  if (!lat || !lon) { statusEl.textContent = "Enter valid coordinates or use Auto-detect."; return; }
+  statusEl.textContent = "Checking risk...";
+  resultEl.textContent = "";
+  try {
+    const res = await fetch(`${apiBase}/locate`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({lat, lon})
+    });
+    const data = await res.json();
+    if (!data.in_coverage) {
+  alert("Dataset covers Chicago only. No local advice.");
+} else if (data.in_high_risk) {
+  alert(data.message);
+} else {
+  // not high-risk
+  if (!data.nearest_low) {
+    document.getElementById('status').textContent = "Not a hotspot. No low-risk centroid available; consider using the nearest public area or route.";
+  } else {
+    // show centroid marker as before
+  }
+}
+
+    statusEl.textContent = "Done.";
+    resultEl.textContent = JSON.stringify(data, null, 2);
+
+    // show map and markers
+    if (!map) {
+      mapDiv.style.display = 'block';
+      map = L.map('map').setView([lat, lon], 13);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors'
+      }).addTo(map);
+    }
+    if (userMarker) map.removeLayer(userMarker);
+    userMarker = L.circleMarker([lat, lon], {radius:6, color:'purple'}).addTo(map).bindPopup('You');
+    map.setView([lat, lon], 13);
+
+    // nearest low-risk centroid
+    if (data.nearest_low && data.nearest_low.centroid) {
+      const c = data.nearest_low.centroid;
+      if (lowMarker) map.removeLayer(lowMarker);
+      lowMarker = L.marker([c[0], c[1]]).addTo(map)
+        .bindPopup(`Nearest low-risk centroid (${(data.nearest_low.distance_m/1000).toFixed(2)} km)`);
+    }
+
+    // show clear warning if out of coverage
+    if (data.in_coverage === false) {
+      alert("WARNING: Your location appears outside Chicago dataset coverage. No local safety advice available.");
+    }
+
+  } catch (e) {
+    statusEl.textContent = "Error calling backend: " + e.message;
+  }
+};
+</script>
+</body>
+</html>
